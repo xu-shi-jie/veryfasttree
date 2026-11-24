@@ -5124,11 +5124,17 @@ AbsNeighbourJoining(inline double)::traverseTreeLogLk(int64_t node, std::vector<
                                   branchlength[children[0]] + branchlength[children[1]], site_likelihood.data());
     loglk += loglkchild;
     if (!site_likelihood.empty()) {
-        /* prevent underflows */
+        /* prevent underflows and overflows: a per-node factor can exceed 1, and in the level-3 parallel
+           traversal a thread multiplies only its own subset of nodes, so its partial product can grow
+           past the double range (inf, then a NaN Gamma(20) log-likelihood) without the second guard */
         for (int64_t i = 0; i < nPos; i++) {
             while (site_likelihood[i] < Constants::LkUnderflow) {
                 site_likelihood[i] *= Constants::LkUnderflowInv;
                 site_loglk[i] -= Constants::LogLkUnderflow;
+            }
+            while (site_likelihood[i] > Constants::LkUnderflowInv) {
+                site_likelihood[i] *= Constants::LkUnderflow;
+                site_loglk[i] += Constants::LogLkUnderflow;
             }
         }
     }
@@ -5196,6 +5202,15 @@ AbsNeighbourJoining(double)::treeLogLk(double site_loglk[]) {
                     for (int64_t i = 0; i < nPos; i++) {
                         site_likelihood[i] *= site_likelihood2[i];
                         site_loglk[i] += site_loglk2[i];
+                        /* the product of the threads' partial products is rescaled as each node's is */
+                        while (site_likelihood[i] < Constants::LkUnderflow) {
+                            site_likelihood[i] *= Constants::LkUnderflowInv;
+                            site_loglk[i] -= Constants::LogLkUnderflow;
+                        }
+                        while (site_likelihood[i] > Constants::LkUnderflowInv) {
+                            site_likelihood[i] *= Constants::LkUnderflow;
+                            site_loglk[i] += Constants::LogLkUnderflow;
+                        }
                     }
                 }
             }
